@@ -1,60 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Wallet, 
   Calendar, 
   Ticket, 
   Plus, 
-  Search, 
   Clock, 
   MapPin, 
   LayoutGrid, 
-  Coins,
-  Users,
-  Tag,
-  ChevronRight,
-  ShieldCheck,
-  AlertCircle,
-  Sparkles,
-  MessageSquare,
-  X,
-  Send,
-  Loader2,
-  Trash2,
-  Repeat,
-  Pencil,
-  ArrowRightLeft
+  Users, 
+  Tag, 
+  ShieldCheck, 
+  AlertCircle, 
+  X, 
+  Loader2, 
+  Trash2, 
+  Repeat, 
+  Pencil
 } from 'lucide-react';
-
-// --- Gemini API Setup ---
-const apiKey = "AIzaSyDjJvUlHQvWpV5wp-MdKgFphiqEDWXac1Q"; 
-
-// --- Utility Functions ---
-
-const callGemini = async (prompt, systemInstruction = "") => {
-  try {
-    const payload = {
-      contents: [{ parts: [{ text: prompt }] }],
-    };
-    if (systemInstruction) {
-        payload.systemInstruction = { parts: [{ text: systemInstruction }] };
-    }
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }
-    );
-    if (!response.ok) throw new Error("API Error");
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "I'm having trouble thinking right now.";
-  } catch (error) {
-    console.error("Gemini Error:", error);
-    return "Sorry, I couldn't connect to the AI service. Please try again.";
-  }
-};
 
 const formatAddress = (addr) => addr ? `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}` : '';
 
@@ -341,7 +303,6 @@ const MarketView = ({ events, buyTicket, resaleTickets, buyResaleTicket, walletA
 const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, walletAddress, showNotification, isProcessing }) => {
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [isGeneratingDesc, setIsGeneratingDesc] = useState(false);
   const [tempTimeSlot, setTempTimeSlot] = useState('');
   
   const [newEvent, setNewEvent] = useState({
@@ -397,15 +358,6 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
 
   const removeTimeSlot = (slot) => {
     setNewEvent(prev => ({...prev, timeSlots: prev.timeSlots.filter(s => s !== slot)}));
-  };
-
-  const handleGenerateDescription = async () => {
-    if (!newEvent.name) return showNotification("Please enter an event name first", "error");
-    setIsGeneratingDesc(true);
-    const prompt = `Write a creative, high-energy, and short description (max 2 sentences) for an event named "${newEvent.name}" happening at "${newEvent.location || 'a secret location'}". The tone should be exciting and urge people to buy tickets. Use emojis.`;
-    const text = await callGemini(prompt);
-    setNewEvent(prev => ({ ...prev, description: text }));
-    setIsGeneratingDesc(false);
   };
 
   return (
@@ -504,18 +456,7 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
             </div>
 
             <div className="col-span-2">
-              <div className="flex justify-between items-center mb-2">
-                <label className="block text-sm font-medium text-slate-400">Description</label>
-                <button
-                  type="button"
-                  onClick={handleGenerateDescription}
-                  disabled={isGeneratingDesc}
-                  className="text-xs flex items-center gap-1.5 text-indigo-400 hover:text-indigo-300 transition-colors bg-indigo-500/10 px-2 py-1 rounded-md border border-indigo-500/20"
-                >
-                  {isGeneratingDesc ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                  Generate with AI
-                </button>
-              </div>
+              <label className="block text-sm font-medium text-slate-400 mb-2">Description</label>
               <textarea 
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none h-24 resize-none"
                 value={newEvent.description}
@@ -673,71 +614,6 @@ const TicketsView = ({ myTickets, handleSellTicket, cancelListing, setActiveTab 
           ))}
         </div>
       )}
-    </div>
-  );
-};
-
-const ChatWidget = ({ events }) => {
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState([
-    { role: 'assistant', text: 'Hello! I am your BlockTix Concierge. Ask me about upcoming events or finding tickets!' }
-  ]);
-  const [chatInput, setChatInput] = useState('');
-  const [isChatLoading, setIsChatLoading] = useState(false);
-  const chatEndRef = useRef(null);
-
-  useEffect(() => {
-    if (chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [chatMessages, isChatOpen]);
-
-  const handleChatSubmit = async (e) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
-    
-    const userMsg = chatInput;
-    setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
-    setChatInput('');
-    setIsChatLoading(true);
-
-    const eventContext = events.map(e => 
-      `- Event: ${e.name} (${e.date})\n  Slots: ${e.timeSlots.join(', ')}\n  Location: ${e.location}\n  Price: ${e.price} ETH`
-    ).join('\n\n');
-
-    const systemPrompt = `You are the AI Concierge for BlockTix. Here is the live data: \n${eventContext}\n Help users find events.`;
-    
-    const response = await callGemini(userMsg, systemPrompt);
-    setChatMessages(prev => [...prev, { role: 'assistant', text: response }]);
-    setIsChatLoading(false);
-  };
-
-  return (
-    <div className={`fixed bottom-6 right-6 z-50 flex flex-col items-end transition-all ${isChatOpen ? 'w-full md:w-96' : 'w-auto'}`}>
-      {isChatOpen && (
-        <div className="mb-4 w-full bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden h-[400px]">
-          <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-4 flex justify-between items-center">
-            <h3 className="text-white font-bold flex gap-2"><Sparkles className="text-yellow-300 w-5 h-5" /> Concierge AI</h3>
-            <button onClick={() => setIsChatOpen(false)} className="text-white"><X size={20} /></button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-900/50">
-            {chatMessages.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] rounded-2xl px-4 py-2 text-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-200'}`}>{msg.text}</div>
-              </div>
-            ))}
-            {isChatLoading && <Loader2 className="animate-spin text-slate-500" />}
-            <div ref={chatEndRef} />
-          </div>
-          <form onSubmit={handleChatSubmit} className="p-3 border-t border-slate-700 bg-slate-800 flex gap-2">
-            <input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Ask..." className="flex-1 bg-slate-900 text-white rounded-full px-4 py-2 text-sm outline-none" />
-            <button type="submit" disabled={isChatLoading} className="p-2 bg-indigo-600 rounded-full text-white"><Send size={16} /></button>
-          </form>
-        </div>
-      )}
-      <button onClick={() => setIsChatOpen(!isChatOpen)} className="w-12 h-12 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg hover:scale-105 transition-transform">
-        {isChatOpen ? <X /> : <MessageSquare />}
-      </button>
     </div>
   );
 };
@@ -1023,8 +899,6 @@ export default function EventTicketingApp() {
             setActiveTab={setActiveTab} 
           />
         )}
-
-        <ChatWidget events={events} />
       </main>
     </div>
   );
