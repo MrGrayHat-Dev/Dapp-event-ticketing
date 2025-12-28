@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 
 // --- Gemini API Setup ---
-const apiKey = ""; // API Key provided by runtime environment
+const apiKey = "AIzaSyDjJvUlHQvWpV5wp-MdKgFphiqEDWXac1Q"; 
 
 // --- Utility Functions ---
 
