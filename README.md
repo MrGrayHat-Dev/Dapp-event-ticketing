@@ -25,7 +25,6 @@ Organizers deploy events, and users mint uniquely owned tickets stored in their 
 - React.js (Vite)
 - Tailwind CSS
 - Lucide React Icons
-- Google Gemini API
 - `window.ethereum` / MetaMask API
 
 ---
@@ -123,7 +122,6 @@ http://localhost:5173
 + CONNECT WALLET
 + CREATE EVENT
 + ADD TIME SLOTS
-+ GENERATE DESCRIPTION (OPTIONAL)
 + DEPLOY CONTRACT
 ```
 
