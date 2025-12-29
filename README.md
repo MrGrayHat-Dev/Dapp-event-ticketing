@@ -13,7 +13,6 @@ Organizers deploy events, and users mint uniquely owned tickets stored in their 
 |---------|-------------|
 | WALLET INTEGRATION | Connect with MetaMask and fetch real-time wallet state |
 | REAL TRANSACTIONS | ETH payment on ticket purchase and resale |
-| AI-ASSISTED DESCRIPTIONS | Gemini AI for instant event text generation |
 | SECONDARY MARKET | Resell and transfer ticket ownership securely |
 | EVENT TIME SLOTS | Multiple selectable time options per event |
 | DATA PERSISTENCE | Browser-side caching retains state after reload |
@@ -26,7 +25,6 @@ Organizers deploy events, and users mint uniquely owned tickets stored in their 
 - React.js (Vite)
 - Tailwind CSS
 - Lucide React Icons
-- Google Gemini API
 - `window.ethereum` / MetaMask API
 
 ---
@@ -124,7 +122,6 @@ http://localhost:5173
 + CONNECT WALLET
 + CREATE EVENT
 + ADD TIME SLOTS
-+ GENERATE DESCRIPTION (OPTIONAL)
 + DEPLOY CONTRACT
 ```
 
