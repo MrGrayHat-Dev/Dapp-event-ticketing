@@ -1,30 +1,64 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Wallet, 
-  Calendar, 
-  Ticket, 
-  Plus, 
-  Clock, 
-  MapPin, 
-  LayoutGrid, 
-  Users, 
-  Tag, 
-  ShieldCheck, 
-  AlertCircle, 
-  X, 
-  Loader2, 
-  Trash2, 
-  Repeat, 
-  Pencil
+  Wallet, Calendar, Ticket, Plus, Clock, MapPin, LayoutGrid, 
+  Users, Tag, ShieldCheck, AlertCircle, X, Loader2, 
+  Trash2, Repeat, Pencil, Sparkles, Send, MessageSquare 
 } from 'lucide-react';
 
+// --- Firebase Imports ---
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, collection, doc, addDoc, updateDoc, 
+  deleteDoc, onSnapshot 
+} from 'firebase/firestore';
+import { 
+  getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged 
+} from 'firebase/auth';
+
+// --- CONFIGURATION ---
+// 1. User's Hardcoded Config (For Localhost)
+const userConfig = {
+  apiKey: "AIzaSyD2yIcuHv1ZDDrtcJSlhXPm93Xiey5vIQY",
+  authDomain: "blocktix-db.firebaseapp.com",
+  projectId: "blocktix-db",
+  storageBucket: "blocktix-db.firebasestorage.app",
+  messagingSenderId: "626656833424",
+  appId: "1:626656833424:web:88ed94d60a2959d46e0d15"
+};
+
+// 2. Environment Check (For Canvas Preview)
+const isEnvAvailable = typeof __firebase_config !== 'undefined';
+const firebaseConfig = isEnvAvailable ? JSON.parse(__firebase_config) : userConfig;
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// --- Initialize Firebase ---
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// --- Helpers ---
 const formatAddress = (addr) => addr ? `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}` : '';
+
+// Dynamic Database Paths to handle both environments securely
+const getCollection = (name) => {
+  if (isEnvAvailable) {
+    return collection(db, 'artifacts', appId, 'public', 'data', name);
+  }
+  return collection(db, name);
+};
+
+const getDocRef = (colName, docId) => {
+  if (isEnvAvailable) {
+    return doc(db, 'artifacts', appId, 'public', 'data', colName, docId);
+  }
+  return doc(db, colName, docId);
+};
 
 // --- Ethereum Transaction Helper ---
 const sendEthTransaction = async (fromAddress, toAddress, amountEth) => {
   if (!window.ethereum) throw new Error("MetaMask not found");
   
-  // Convert ETH to Wei (1 ETH = 10^18 Wei) and then to Hex
+  // Convert ETH to Wei (1 ETH = 10^18 Wei)
   const weiValue = BigInt(Math.floor(parseFloat(amountEth) * 1e18));
   const valueHex = '0x' + weiValue.toString(16);
 
@@ -46,7 +80,32 @@ const sendEthTransaction = async (fromAddress, toAddress, amountEth) => {
   }
 };
 
-// --- Shared Components ---
+// --- Gemini API (Optional) ---
+const apiKey = ""; // API Key provided by runtime environment
+const callGemini = async (prompt, systemInstruction = "") => {
+  try {
+    const payload = {
+      contents: [{ parts: [{ text: prompt }] }],
+      systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined
+    };
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    );
+    if (!response.ok) throw new Error("API Error");
+    const data = await response.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || "Thinking...";
+  } catch (error) {
+    console.error("Gemini Error:", error);
+    return "AI service unavailable.";
+  }
+};
+
+// --- Components ---
 
 const Card = ({ children, className = "" }) => (
   <div className={`bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-lg ${className}`}>
@@ -87,8 +146,6 @@ const Button = ({ children, onClick, variant = "primary", className = "", disabl
     </button>
   );
 };
-
-// --- Sub-Components ---
 
 const Navbar = ({ activeTab, setActiveTab, walletAddress, balance, connectWallet, isConnecting }) => (
   <nav className="border-b border-slate-700 bg-slate-900/80 backdrop-blur-md sticky top-0 z-50">
@@ -216,7 +273,7 @@ const MarketView = ({ events, buyTicket, resaleTickets, buyResaleTicket, walletA
                 <div className="mb-4">
                     <label className="text-xs text-slate-500 uppercase font-bold tracking-wider block mb-2">Select Time</label>
                     <div className="flex flex-wrap gap-2">
-                    {event.timeSlots.map(slot => (
+                    {event.timeSlots?.map(slot => (
                         <button
                         key={slot}
                         onClick={() => handleSlotSelect(event.id, slot)}
@@ -263,7 +320,7 @@ const MarketView = ({ events, buyTicket, resaleTickets, buyResaleTicket, walletA
               <div className="p-5">
                 <div className="flex justify-between mb-2">
                   <Badge color="orange">Resale</Badge>
-                  <span className="font-mono text-xs text-slate-500">#{ticket.id}</span>
+                  <span className="font-mono text-xs text-slate-500">#{ticket.id.substring(0,6)}</span>
                 </div>
                 <h3 className="text-lg font-bold text-white mb-1">{ticket.eventName}</h3>
                 <div className="flex items-center gap-4 text-sm text-slate-400 mb-4">
@@ -303,6 +360,7 @@ const MarketView = ({ events, buyTicket, resaleTickets, buyResaleTicket, walletA
 const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, walletAddress, showNotification, isProcessing }) => {
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [isGeneratingDesc, setIsGeneratingDesc] = useState(false);
   const [tempTimeSlot, setTempTimeSlot] = useState('');
   
   const [newEvent, setNewEvent] = useState({
@@ -325,7 +383,7 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
     setNewEvent({
         name: event.name,
         date: event.date,
-        timeSlots: event.timeSlots,
+        timeSlots: event.timeSlots || [],
         location: event.location,
         price: event.price,
         totalSeats: event.totalSeats,
@@ -345,7 +403,7 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
         onEventUpdate({ ...newEvent, id: editingId });
         resetForm();
     } else {
-        onEventCreate(newEvent, resetForm);
+        onEventCreate(newEvent); 
     }
   };
 
@@ -358,6 +416,15 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
 
   const removeTimeSlot = (slot) => {
     setNewEvent(prev => ({...prev, timeSlots: prev.timeSlots.filter(s => s !== slot)}));
+  };
+
+  const handleGenerateDescription = async () => {
+    if (!newEvent.name) return showNotification("Please enter an event name first", "error");
+    setIsGeneratingDesc(true);
+    const prompt = `Write a creative, high-energy, and short description (max 2 sentences) for an event named "${newEvent.name}" happening at "${newEvent.location || 'a secret location'}". The tone should be exciting and urge people to buy tickets. Use emojis.`;
+    const text = await callGemini(prompt);
+    setNewEvent(prev => ({ ...prev, description: text }));
+    setIsGeneratingDesc(false);
   };
 
   return (
@@ -456,7 +523,18 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
             </div>
 
             <div className="col-span-2">
-              <label className="block text-sm font-medium text-slate-400 mb-2">Description</label>
+              <div className="flex justify-between items-center mb-2">
+                <label className="block text-sm font-medium text-slate-400">Description</label>
+                <button
+                  type="button"
+                  onClick={handleGenerateDescription}
+                  disabled={isGeneratingDesc}
+                  className="text-xs flex items-center gap-1.5 text-indigo-400 hover:text-indigo-300 transition-colors bg-indigo-500/10 px-2 py-1 rounded-md border border-indigo-500/20"
+                >
+                  {isGeneratingDesc ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                  Generate with AI
+                </button>
+              </div>
               <textarea 
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none h-24 resize-none"
                 value={newEvent.description}
@@ -495,7 +573,7 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
               <tr key={e.id} className="hover:bg-slate-700/30 transition-colors">
                 <td className="px-6 py-4 font-medium text-white">{e.name}</td>
                 <td className="px-6 py-4 text-sm">{e.date}</td>
-                <td className="px-6 py-4 text-xs font-mono">{e.timeSlots.length} Slots</td>
+                <td className="px-6 py-4 text-xs font-mono">{e.timeSlots?.length} Slots</td>
                 <td className="px-6 py-4 font-mono text-sm">{e.totalSeats - e.remainingSeats} / {e.totalSeats}</td>
                 <td className="px-6 py-4">
                   <Badge color={e.remainingSeats > 0 ? 'green' : 'red'}>
@@ -568,7 +646,7 @@ const TicketsView = ({ myTickets, handleSellTicket, cancelListing, setActiveTab 
               <div className="bg-indigo-600 p-6 flex flex-col justify-between items-center w-24 relative">
                 <div className="border-2 border-dashed border-white/30 rounded-full w-4 h-4 absolute -top-2 left-1/2 -translate-x-1/2 bg-slate-900" />
                 <div className="border-2 border-dashed border-white/30 rounded-full w-4 h-4 absolute -bottom-2 left-1/2 -translate-x-1/2 bg-slate-900" />
-                <span className="text-white/80 font-mono text-xs rotate-180" style={{writingMode: 'vertical-rl'}}>#{ticket.id}</span>
+                <span className="text-white/80 font-mono text-xs rotate-180" style={{writingMode: 'vertical-rl'}}>#{ticket.id.substring(0,6)}</span>
                 <Ticket className="text-white" />
               </div>
 
@@ -618,9 +696,75 @@ const TicketsView = ({ myTickets, handleSellTicket, cancelListing, setActiveTab 
   );
 };
 
+const ChatWidget = ({ events }) => {
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState([
+    { role: 'assistant', text: 'Hello! I am your BlockTix Concierge. Ask me about upcoming events or finding tickets!' }
+  ]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const chatEndRef = useRef(null);
+
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatMessages, isChatOpen]);
+
+  const handleChatSubmit = async (e) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+    
+    const userMsg = chatInput;
+    setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setChatInput('');
+    setIsChatLoading(true);
+
+    const eventContext = events.map(e => 
+      `- Event: ${e.name} (${e.date})\n  Slots: ${e.timeSlots?.join(', ') || 'N/A'}\n  Location: ${e.location}\n  Price: ${e.price} ETH`
+    ).join('\n\n');
+
+    const systemPrompt = `You are the AI Concierge for BlockTix. Here is the live data: \n${eventContext}\n Help users find events.`;
+    
+    const response = await callGemini(userMsg, systemPrompt);
+    setChatMessages(prev => [...prev, { role: 'assistant', text: response }]);
+    setIsChatLoading(false);
+  };
+
+  return (
+    <div className={`fixed bottom-6 right-6 z-50 flex flex-col items-end transition-all ${isChatOpen ? 'w-full md:w-96' : 'w-auto'}`}>
+      {isChatOpen && (
+        <div className="mb-4 w-full bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden h-[400px]">
+          <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-4 flex justify-between items-center">
+            <h3 className="text-white font-bold flex gap-2"><Sparkles className="text-yellow-300 w-5 h-5" /> Concierge AI</h3>
+            <button onClick={() => setIsChatOpen(false)} className="text-white"><X size={20} /></button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-900/50">
+            {chatMessages.map((msg, i) => (
+              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] rounded-2xl px-4 py-2 text-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-200'}`}>{msg.text}</div>
+              </div>
+            ))}
+            {isChatLoading && <Loader2 className="animate-spin text-slate-500" />}
+            <div ref={chatEndRef} />
+          </div>
+          <form onSubmit={handleChatSubmit} className="p-3 border-t border-slate-700 bg-slate-800 flex gap-2">
+            <input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Ask..." className="flex-1 bg-slate-900 text-white rounded-full px-4 py-2 text-sm outline-none" />
+            <button type="submit" disabled={isChatLoading} className="p-2 bg-indigo-600 rounded-full text-white"><Send size={16} /></button>
+          </form>
+        </div>
+      )}
+      <button onClick={() => setIsChatOpen(!isChatOpen)} className="w-12 h-12 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg hover:scale-105 transition-transform">
+        {isChatOpen ? <X /> : <MessageSquare />}
+      </button>
+    </div>
+  );
+};
+
 // --- Main App Component ---
 
 export default function EventTicketingApp() {
+  const [user, setUser] = useState(null); 
   const [activeTab, setActiveTab] = useState('market');
   const [walletAddress, setWalletAddress] = useState(null);
   const [balance, setBalance] = useState('0.00');
@@ -628,217 +772,231 @@ export default function EventTicketingApp() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [notification, setNotification] = useState(null);
 
-  // --- Persistent State ---
-  const [events, setEvents] = useState(() => {
-    const saved = localStorage.getItem('blocktix_events');
-    return saved ? JSON.parse(saved) : [];
-  });
-  
-  const [allTickets, setAllTickets] = useState(() => {
-    const saved = localStorage.getItem('blocktix_tickets');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // Data from Firestore
+  const [events, setEvents] = useState([]);
+  const [allTickets, setAllTickets] = useState([]);
 
-  // Derived State
-  const myTickets = walletAddress 
-    ? allTickets.filter(t => t.owner && t.owner.toLowerCase() === walletAddress.toLowerCase()) 
-    : [];
-  
-  const resaleTickets = allTickets.filter(t => t.isForSale);
-
-  // --- Persistence Effects ---
+  // --- 1. Robust Auth Connection ---
   useEffect(() => {
-    localStorage.setItem('blocktix_events', JSON.stringify(events));
-  }, [events]);
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Auth Initialization Error:", error);
+        // Don't block the app, just log. Data sync might still work if Rules are open.
+      }
+    };
+    initAuth();
+    return onAuthStateChanged(auth, setUser);
+  }, []);
+
+  // --- 2. Real-time Data Sync ---
+  useEffect(() => {
+    // Removed "if (!user) return;" to allow reading public data even if Auth fails (Test Mode)
+    
+    // Sync Events
+    const eventsRef = getCollection('events');
+    const unsubEvents = onSnapshot(eventsRef, (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setEvents(list.sort((a, b) => b.createdAt - a.createdAt));
+    }, (err) => console.error("Event Sync Error", err));
+
+    // Sync Tickets
+    const ticketsRef = getCollection('tickets');
+    const unsubTickets = onSnapshot(ticketsRef, (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setAllTickets(list);
+    }, (err) => console.error("Ticket Sync Error", err));
+
+    return () => {
+      unsubEvents();
+      unsubTickets();
+    };
+  }, [user]);
+
+  // --- 3. Wallet Logic ---
+  const connectWallet = async () => {
+    if (typeof window.ethereum === 'undefined') return showNotification("MetaMask not found", "error");
+    setIsConnecting(true);
+    try {
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      setWalletAddress(accounts[0]);
+      await refreshBalance(accounts[0]);
+      showNotification("Wallet Connected", "success");
+    } catch (error) {
+      showNotification("Connection failed", "error");
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const refreshBalance = async (address) => {
+    if (!address || !window.ethereum) return;
+    try {
+      const balanceWei = await window.ethereum.request({ method: 'eth_getBalance', params: [address, 'latest'] });
+      setBalance((parseInt(balanceWei, 16) / 10**18).toFixed(4));
+    } catch (e) { console.error(e); }
+  };
 
   useEffect(() => {
-    localStorage.setItem('blocktix_tickets', JSON.stringify(allTickets));
-  }, [allTickets]);
-
-  // --- Actions ---
+    if (window.ethereum) {
+      window.ethereum.on('accountsChanged', (accs) => {
+        setWalletAddress(accs[0] || null);
+        if(accs[0]) refreshBalance(accs[0]);
+      });
+    }
+  }, []);
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
   };
 
-  const refreshBalance = async (address) => {
-    if (!address || !window.ethereum) return;
-    try {
-      const balanceWei = await window.ethereum.request({ 
-        method: 'eth_getBalance', 
-        params: [address, 'latest'] 
-      });
-      const balanceEth = (parseInt(balanceWei, 16) / 10**18).toFixed(4);
-      setBalance(balanceEth);
-    } catch (e) { console.error("Balance refresh failed", e); }
-  };
+  // --- 4. Transaction & Database Logic ---
 
-  const connectWallet = async () => {
-    if (typeof window.ethereum === 'undefined') {
-      showNotification("MetaMask not detected. Please install it.", "error");
-      return;
-    }
-
-    setIsConnecting(true);
-    try {
-      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-      const account = accounts[0];
-      setWalletAddress(account);
-      
-      await refreshBalance(account);
-      
-      showNotification("Wallet Connected", "success");
-    } catch (error) {
-      console.error(error);
-      showNotification("Connection Failed", "error");
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  useEffect(() => {
-    if (typeof window.ethereum !== 'undefined') {
-      window.ethereum.on('accountsChanged', (accounts) => {
-        if (accounts.length > 0) {
-          setWalletAddress(accounts[0]);
-          connectWallet(); 
-        } else {
-          setWalletAddress(null);
-          setBalance('0.00');
-        }
-      });
-    }
-  }, []);
-
-  const handleEventCreate = async (newEventData, onSuccess) => {
+  const handleCreateEvent = async (newEventData) => {
+    // Note: newEventData is passed from OrganizerView (not 'e')
+    // We already check wallet in OrganizerView, but safe to check again or trust UI.
+    
     setIsProcessing(true);
-    try {
-        await sendEthTransaction(walletAddress, walletAddress, "0");
+    
+    const eventPayload = {
+        name: newEventData.name,
+        date: newEventData.date,
+        price: parseFloat(newEventData.price),
+        totalSeats: parseInt(newEventData.totalSeats),
+        remainingSeats: parseInt(newEventData.totalSeats),
+        location: newEventData.location,
+        description: newEventData.description,
+        timeSlots: newEventData.timeSlots,
+        organizer: walletAddress,
+        image: ['blue', 'purple', 'pink'][Math.floor(Math.random() * 3)],
+        createdAt: Date.now()
+    };
 
-        const event = {
-          id: Date.now(), 
-          organizer: walletAddress,
-          ...newEventData,
-          price: parseFloat(newEventData.price),
-          totalSeats: parseInt(newEventData.totalSeats),
-          remainingSeats: parseInt(newEventData.totalSeats),
-          image: ['blue', 'purple', 'pink'][Math.floor(Math.random() * 3)]
-        };
-        setEvents(prev => [event, ...prev]);
-        showNotification("Contract Deployed & Event Created!", "success");
-        if(onSuccess) onSuccess();
-        
-        // Refresh balance (Gas fees used)
+    try {
+        await sendEthTransaction(walletAddress, walletAddress, "0"); // Fake Deploy Gas
+        await addDoc(getCollection('events'), eventPayload);
+        showNotification("Event Published Globally!", "success");
         setTimeout(() => refreshBalance(walletAddress), 3000);
-    } catch (error) {
-        showNotification("Transaction Rejected", "error");
+    } catch (err) {
+        console.error(err);
+        showNotification("Failed to create event", "error");
     } finally {
         setIsProcessing(false);
     }
   };
 
-  const handleEventUpdate = (updatedData) => {
-    const oldEvent = events.find(e => e.id === updatedData.id);
-    const seatDiff = parseInt(updatedData.totalSeats) - parseInt(oldEvent.totalSeats);
-    
-    const updatedEvent = {
-        ...oldEvent,
-        ...updatedData,
-        price: parseFloat(updatedData.price),
-        totalSeats: parseInt(updatedData.totalSeats),
-        remainingSeats: parseInt(oldEvent.remainingSeats) + seatDiff
-    };
-
-    setEvents(events.map(e => e.id === updatedData.id ? updatedEvent : e));
-    showNotification("Event block updated!", "success");
-  };
-
-  const handleEventDelete = (id) => {
-    if (confirm("Are you sure you want to delete this event from the blockchain?")) {
-        setEvents(events.filter(e => e.id !== id));
-        showNotification("Event deleted", "success");
-    }
-  };
-
-  const buyTicket = async (event, selectedSlot) => {
-    if (!walletAddress) return showNotification("Please connect wallet first", "error");
-    if (!selectedSlot) return showNotification("Please select a time slot", "error");
+  const buyTicket = async (event, slot) => {
+    if (!walletAddress) return showNotification("Connect wallet first", "error");
     
     setIsProcessing(true);
     try {
         await sendEthTransaction(walletAddress, event.organizer, event.price.toString());
-
-        // Optimistically update balance instantly
         setBalance(prev => (parseFloat(prev) - event.price).toFixed(4));
 
-        setEvents(events.map(e => e.id === event.id ? {...e, remainingSeats: e.remainingSeats - 1} : e));
-
-        const newTicket = {
-            id: Math.floor(Math.random() * 1000000),
+        await addDoc(getCollection('tickets'), {
             eventId: event.id,
             eventName: event.name,
             eventDate: event.date,
-            timeSlot: selectedSlot,
+            timeSlot: slot,
             purchasePrice: event.price,
-            isForSale: false,
             resalePrice: 0,
-            owner: walletAddress
-        };
-        
-        setAllTickets(prev => [newTicket, ...prev]);
-        showNotification(`Transaction Confirmed! Ticket Minted.`, "success");
+            isForSale: false,
+            owner: walletAddress,
+            createdAt: Date.now()
+        });
 
-        // Sync real balance after delay (to catch gas fees)
+        const eventRef = getDocRef('events', event.id);
+        await updateDoc(eventRef, { remainingSeats: event.remainingSeats - 1 });
+
+        showNotification("Ticket Minted & Saved!", "success");
         setTimeout(() => refreshBalance(walletAddress), 4000);
-    } catch (error) {
-        showNotification("Purchase Failed/Rejected", "error");
+    } catch (err) {
+        console.error(err);
+        showNotification("Purchase failed", "error");
     } finally {
         setIsProcessing(false);
     }
   };
 
-  const handleSellTicket = (ticketId, price) => {
-    setAllTickets(prev => prev.map(t => 
-        t.id === ticketId ? { ...t, isForSale: true, resalePrice: price } : t
-    ));
-    showNotification(`Ticket #${ticketId} listed for ${price} ETH`, "success");
+  const handleSell = async (ticketId, price) => {
+    try {
+        const ref = getDocRef('tickets', ticketId);
+        await updateDoc(ref, { isForSale: true, resalePrice: price });
+        showNotification("Listed on Global Market", "success");
+    } catch(e) { showNotification("Error listing ticket", "error"); }
   };
 
-  const cancelListing = (ticketId) => {
-    setAllTickets(prev => prev.map(t => 
-        t.id === ticketId ? { ...t, isForSale: false, resalePrice: 0 } : t
-    ));
-    showNotification("Listing cancelled", "success");
-  };
-
-  const buyResaleTicket = async (ticket) => {
-    if (!walletAddress) return showNotification("Connect Wallet", "error");
+  const handleBuyResale = async (ticket) => {
+    if (!walletAddress) return showNotification("Connect wallet", "error");
     
     setIsProcessing(true);
     try {
         await sendEthTransaction(walletAddress, ticket.owner, ticket.resalePrice.toString());
-
-        // Optimistically update balance instantly
         setBalance(prev => (parseFloat(prev) - ticket.resalePrice).toFixed(4));
 
-        // Transfer ownership
-        setAllTickets(prev => prev.map(t => 
-            t.id === ticket.id 
-            ? { ...t, owner: walletAddress, isForSale: false, purchasePrice: ticket.resalePrice, resalePrice: 0 } 
-            : t
-        ));
-        
-        showNotification(`Secondary Market Purchase Successful!`, "success");
-
-        // Sync real balance after delay
+        const ref = getDocRef('tickets', ticket.id);
+        await updateDoc(ref, { 
+            owner: walletAddress, 
+            isForSale: false, 
+            resalePrice: 0, 
+            purchasePrice: ticket.resalePrice 
+        });
+        showNotification("Ticket Transferred!", "success");
         setTimeout(() => refreshBalance(walletAddress), 4000);
-    } catch (error) {
-        showNotification("Transaction Rejected", "error");
+    } catch(e) {
+        showNotification("Transfer failed", "error");
     } finally {
         setIsProcessing(false);
     }
   };
+
+  const handleEventUpdate = async (updatedData) => {
+    try {
+      const oldEvent = events.find(e => e.id === updatedData.id);
+      const seatDiff = parseInt(updatedData.totalSeats) - parseInt(oldEvent.totalSeats);
+      
+      const eventRef = getDocRef('events', updatedData.id);
+
+      await updateDoc(eventRef, {
+          ...updatedData,
+          price: parseFloat(updatedData.price),
+          totalSeats: parseInt(updatedData.totalSeats),
+          remainingSeats: parseInt(oldEvent.remainingSeats) + seatDiff
+      });
+      showNotification("Event updated!", "success");
+    } catch(e) {
+      showNotification("Update failed", "error");
+    }
+  };
+
+  const handleEventDelete = async (id) => {
+      if(confirm("Delete this event?")) {
+          const ref = getDocRef('events', id);
+          await deleteDoc(ref);
+          showNotification("Event deleted", "success");
+      }
+  };
+
+  const cancelListing = async (ticketId) => {
+    try {
+      const ref = getDocRef('tickets', ticketId);
+      await updateDoc(ref, { isForSale: false, resalePrice: 0 });
+      showNotification("Listing cancelled", "success");
+    } catch(e) { showNotification("Error cancelling", "error"); }
+  };
+
+  // --- Filtering ---
+  const myTickets = walletAddress 
+    ? allTickets.filter(t => t.owner && t.owner.toLowerCase() === walletAddress.toLowerCase()) 
+    : [];
+  
+  const resaleTickets = allTickets.filter(t => t.isForSale);
 
   return (
     <div className="min-h-screen bg-slate-950 font-sans selection:bg-indigo-500/30">
@@ -851,29 +1009,69 @@ export default function EventTicketingApp() {
         </div>
       )}
 
-      <Navbar 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
-        walletAddress={walletAddress} 
-        balance={balance} 
-        connectWallet={connectWallet}
-        isConnecting={isConnecting}
-      />
+      {/* Navbar */}
+      <nav className="border-b border-slate-700 bg-slate-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center gap-2">
+              <div className="bg-indigo-600 p-2 rounded-lg"><Ticket className="text-white h-6 w-6" /></div>
+              <h1 className="text-xl font-bold text-white tracking-tight hidden sm:block">BlockTix</h1>
+            </div>
+
+            <div className="flex items-center gap-4">
+               <div className="hidden md:flex gap-1 bg-slate-800 p-1 rounded-lg">
+                {[
+                  { id: 'market', label: 'Market', icon: LayoutGrid },
+                  { id: 'tickets', label: 'My Tickets', icon: Tag },
+                  { id: 'organizer', label: 'Organizer', icon: Users },
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                      activeTab === tab.id 
+                        ? 'bg-indigo-600 text-white shadow-md' 
+                        : 'text-slate-400 hover:text-white hover:bg-slate-700'
+                    }`}
+                  >
+                    <tab.icon size={16} />
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {walletAddress ? (
+                <div className="flex items-center gap-3 bg-slate-800 border border-slate-700 rounded-full pl-4 pr-1 py-1">
+                  <div className="flex flex-col items-end mr-2">
+                    <span className="text-xs text-slate-400 font-mono">{formatAddress(walletAddress)}</span>
+                    <span className="text-sm font-bold text-indigo-400">{balance} ETH</span>
+                  </div>
+                  <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 border-2 border-slate-900" />
+                </div>
+              ) : (
+                <Button onClick={connectWallet} icon={Wallet} loading={isConnecting}>Connect Wallet</Button>
+              )}
+            </div>
+          </div>
+        </div>
+        
+        {/* Mobile Nav */}
+        <div className="md:hidden flex justify-around border-t border-slate-800 bg-slate-900 p-2">
+           {[{ id: 'market', icon: LayoutGrid }, { id: 'tickets', icon: Tag }, { id: 'organizer', icon: Users }].map(tab => (
+              <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`p-2 rounded-lg ${activeTab === tab.id ? 'bg-indigo-600/20 text-indigo-400' : 'text-slate-400'}`}>
+                <tab.icon size={20} />
+              </button>
+           ))}
+        </div>
+      </nav>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative">
-        {activeTab === 'market' && (
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-white mb-2">Explore Events</h1>
-            <p className="text-slate-400">Discover and book tickets on the blockchain.</p>
-          </div>
-        )}
-        
         {activeTab === 'market' && (
           <MarketView 
             events={events} 
             buyTicket={buyTicket} 
             resaleTickets={resaleTickets}
-            buyResaleTicket={buyResaleTicket}
+            buyResaleTicket={handleBuyResale}
             walletAddress={walletAddress}
             isProcessing={isProcessing}
           />
@@ -882,7 +1080,7 @@ export default function EventTicketingApp() {
         {activeTab === 'organizer' && (
           <OrganizerView 
             events={events} 
-            onEventCreate={handleEventCreate} 
+            onEventCreate={handleCreateEvent} 
             onEventUpdate={handleEventUpdate}
             onEventDelete={handleEventDelete}
             walletAddress={walletAddress} 
@@ -894,11 +1092,13 @@ export default function EventTicketingApp() {
         {activeTab === 'tickets' && (
           <TicketsView 
             myTickets={myTickets} 
-            handleSellTicket={handleSellTicket} 
+            handleSellTicket={handleSell} 
             cancelListing={cancelListing}
             setActiveTab={setActiveTab} 
           />
         )}
+
+        <ChatWidget events={events} />
       </main>
     </div>
   );
