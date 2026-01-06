@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
-  Wallet, Calendar, Ticket, Plus, Clock, MapPin, LayoutGrid, 
+  Wallet, Calendar, Ticket, Plus, MapPin, LayoutGrid, 
   Users, Tag, ShieldCheck, AlertCircle, X, Loader2, 
-  Trash2, Repeat, Pencil, Sparkles, Send, MessageSquare 
+  Trash2, Repeat, Pencil, Minus, ShoppingBag, Clock
 } from 'lucide-react';
 
 // --- Firebase Imports ---
@@ -15,8 +15,7 @@ import {
   getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged 
 } from 'firebase/auth';
 
-// --- CONFIGURATION ---
-// 1. User's Hardcoded Config (For Localhost)
+// --- CONFIGURATION STRATEGY ---
 const userConfig = {
   apiKey: "AIzaSyD2yIcuHv1ZDDrtcJSlhXPm93Xiey5vIQY",
   authDomain: "blocktix-db.firebaseapp.com",
@@ -26,7 +25,6 @@ const userConfig = {
   appId: "1:626656833424:web:88ed94d60a2959d46e0d15"
 };
 
-// 2. Environment Check (For Canvas Preview)
 const isEnvAvailable = typeof __firebase_config !== 'undefined';
 const firebaseConfig = isEnvAvailable ? JSON.parse(__firebase_config) : userConfig;
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -39,7 +37,15 @@ const db = getFirestore(app);
 // --- Helpers ---
 const formatAddress = (addr) => addr ? `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}` : '';
 
-// Dynamic Database Paths to handle both environments securely
+const sendEthTransaction = async (fromAddress, toAddress, amountEth) => {
+  if (!window.ethereum) throw new Error("MetaMask not found");
+  const weiValue = BigInt(Math.floor(parseFloat(amountEth) * 1e18));
+  const valueHex = '0x' + weiValue.toString(16);
+  const params = [{ from: fromAddress, to: toAddress, value: valueHex }];
+  return await window.ethereum.request({ method: 'eth_sendTransaction', params });
+};
+
+// --- Helper: Dynamic Collection Paths ---
 const getCollection = (name) => {
   if (isEnvAvailable) {
     return collection(db, 'artifacts', appId, 'public', 'data', name);
@@ -54,61 +60,11 @@ const getDocRef = (colName, docId) => {
   return doc(db, colName, docId);
 };
 
-// --- Ethereum Transaction Helper ---
-const sendEthTransaction = async (fromAddress, toAddress, amountEth) => {
-  if (!window.ethereum) throw new Error("MetaMask not found");
-  
-  // Convert ETH to Wei (1 ETH = 10^18 Wei)
-  const weiValue = BigInt(Math.floor(parseFloat(amountEth) * 1e18));
-  const valueHex = '0x' + weiValue.toString(16);
-
-  const params = [{
-    from: fromAddress,
-    to: toAddress,
-    value: valueHex,
-  }];
-
-  try {
-    const txHash = await window.ethereum.request({
-      method: 'eth_sendTransaction',
-      params,
-    });
-    return txHash;
-  } catch (error) {
-    console.error("Transaction Error:", error);
-    throw error;
-  }
-};
-
-// --- Gemini API (Optional) ---
-const apiKey = ""; // API Key provided by runtime environment
-const callGemini = async (prompt, systemInstruction = "") => {
-  try {
-    const payload = {
-      contents: [{ parts: [{ text: prompt }] }],
-      systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined
-    };
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }
-    );
-    if (!response.ok) throw new Error("API Error");
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "Thinking...";
-  } catch (error) {
-    console.error("Gemini Error:", error);
-    return "AI service unavailable.";
-  }
-};
-
 // --- Components ---
 
 const Card = ({ children, className = "" }) => (
-  <div className={`bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-lg ${className}`}>
+  // Fixed: Ensure custom bg classes (like bg-white) override default bg-slate-800
+  <div className={`border border-slate-700 rounded-xl overflow-hidden shadow-lg ${className.includes('bg-') ? '' : 'bg-slate-800'} ${className}`}>
     {children}
   </div>
 );
@@ -138,7 +94,6 @@ const Button = ({ children, onClick, variant = "primary", className = "", disabl
     danger: "bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20",
     success: "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20"
   };
-
   return (
     <button type={type} onClick={onClick} disabled={disabled || loading} className={`${base} ${variants[variant]} ${className}`}>
       {loading ? <Loader2 size={18} className="animate-spin" /> : Icon && <Icon size={18} />}
@@ -147,80 +102,21 @@ const Button = ({ children, onClick, variant = "primary", className = "", disabl
   );
 };
 
-const Navbar = ({ activeTab, setActiveTab, walletAddress, balance, connectWallet, isConnecting }) => (
-  <nav className="border-b border-slate-700 bg-slate-900/80 backdrop-blur-md sticky top-0 z-50">
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div className="flex justify-between items-center h-16">
-        <div className="flex items-center gap-2">
-          <div className="bg-indigo-600 p-2 rounded-lg">
-            <Ticket className="text-white h-6 w-6" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-white tracking-tight">BlockTix</h1>
-            <p className="text-xs text-slate-400 -mt-1 font-mono">Decentralized Events</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <div className="hidden md:flex gap-1 bg-slate-800 p-1 rounded-lg">
-            {[
-              { id: 'market', label: 'Marketplace', icon: LayoutGrid },
-              { id: 'tickets', label: 'My Tickets', icon: Tag },
-              { id: 'organizer', label: 'Organizer', icon: Users },
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                  activeTab === tab.id 
-                    ? 'bg-indigo-600 text-white shadow-md' 
-                    : 'text-slate-400 hover:text-white hover:bg-slate-700'
-                }`}
-              >
-                <tab.icon size={16} />
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {walletAddress ? (
-            <div className="flex items-center gap-3 bg-slate-800 border border-slate-700 rounded-full pl-4 pr-1 py-1">
-              <div className="flex flex-col items-end mr-2">
-                <span className="text-xs text-slate-400 font-mono">{formatAddress(walletAddress)}</span>
-                <span className="text-sm font-bold text-indigo-400">{balance} ETH</span>
-              </div>
-              <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 border-2 border-slate-900" />
-            </div>
-          ) : (
-            <Button onClick={connectWallet} icon={Wallet} loading={isConnecting}>Connect Wallet</Button>
-          )}
-        </div>
-      </div>
-    </div>
-    
-    <div className="md:hidden flex justify-around border-t border-slate-800 bg-slate-900 p-2">
-       {[
-          { id: 'market', icon: LayoutGrid },
-          { id: 'tickets', icon: Tag },
-          { id: 'organizer', icon: Users },
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`p-2 rounded-lg ${activeTab === tab.id ? 'bg-indigo-600/20 text-indigo-400' : 'text-slate-400'}`}
-          >
-            <tab.icon size={20} />
-          </button>
-        ))}
-    </div>
-  </nav>
-);
-
 const MarketView = ({ events, buyTicket, resaleTickets, buyResaleTicket, walletAddress, isProcessing }) => {
   const [selectedSlots, setSelectedSlots] = useState({});
+  const [quantities, setQuantities] = useState({});
 
   const handleSlotSelect = (eventId, slot) => {
     setSelectedSlots(prev => ({...prev, [eventId]: slot}));
+    setQuantities(prev => ({...prev, [eventId]: 1}));
+  };
+
+  const handleQuantityChange = (eventId, delta, max) => {
+    setQuantities(prev => {
+      const current = prev[eventId] || 1;
+      const newVal = Math.max(1, Math.min(max, current + delta));
+      return { ...prev, [eventId]: newVal };
+    });
   };
 
   return (
@@ -234,76 +130,133 @@ const MarketView = ({ events, buyTicket, resaleTickets, buyResaleTicket, walletA
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in zoom-in duration-300 mb-12">
-            {events.map((event) => (
-            <Card key={event.id} className="group hover:border-indigo-500/50 transition-all duration-300">
-                <div className={`h-48 w-full relative overflow-hidden`}>
-                <div className={`absolute inset-0 bg-gradient-to-br ${
-                    event.image === 'purple' ? 'from-purple-900 via-slate-900 to-indigo-900' :
-                    event.image === 'blue' ? 'from-blue-900 via-slate-900 to-cyan-900' :
-                    'from-pink-900 via-slate-900 to-rose-900'
-                }`} />
-                <div className="absolute inset-0 opacity-30" style={{backgroundImage: 'radial-gradient(circle at 2px 2px, white 1px, transparent 0)', backgroundSize: '24px 24px'}}></div>
-                
-                <div className="absolute top-4 right-4 bg-black/40 backdrop-blur-md px-3 py-1 rounded-full text-white font-mono text-sm border border-white/10">
-                    {event.price} ETH
-                </div>
-                <div className="absolute bottom-4 left-4 right-4">
-                    <h3 className="text-xl font-bold text-white mb-1 drop-shadow-lg">{event.name}</h3>
-                    <div className="flex items-center text-slate-300 text-sm gap-2">
-                    <MapPin size={14} /> {event.location}
-                    </div>
-                </div>
-                </div>
-                
-                <div className="p-5">
-                <div className="flex justify-between items-start mb-4">
-                    <div className="flex flex-col gap-1">
-                    <div className="flex items-center text-slate-400 text-sm gap-2">
-                        <Calendar size={14} /> {event.date}
-                    </div>
-                    </div>
-                    <div className="text-right">
-                    <div className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">Seats</div>
-                    <div className={`font-mono font-bold ${event.remainingSeats < 20 ? 'text-red-400' : 'text-emerald-400'}`}>
-                        {event.remainingSeats}/{event.totalSeats}
-                    </div>
-                    </div>
-                </div>
+            {events.map((event) => {
+              const hasSlots = event.timeSlots && event.timeSlots.length > 0;
+              const activeSlot = selectedSlots[event.id] || (hasSlots ? event.timeSlots[0] : null);
+              
+              let currentAvailability = 0;
+              let maxCapacity = 0;
 
-                <div className="mb-4">
-                    <label className="text-xs text-slate-500 uppercase font-bold tracking-wider block mb-2">Select Time</label>
-                    <div className="flex flex-wrap gap-2">
-                    {event.timeSlots?.map(slot => (
-                        <button
-                        key={slot}
-                        onClick={() => handleSlotSelect(event.id, slot)}
-                        className={`px-3 py-1 rounded text-xs font-mono transition-colors ${
-                            selectedSlots[event.id] === slot 
-                            ? 'bg-indigo-600 text-white' 
-                            : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                        }`}
+              if (hasSlots) {
+                  currentAvailability = event.slotAvailability ? (event.slotAvailability[activeSlot] || 0) : 0;
+                  maxCapacity = event.slotTotalCapacity ? (event.slotTotalCapacity[activeSlot] || 0) : 0;
+              } else {
+                  currentAvailability = event.remainingSeats || 0;
+                  maxCapacity = event.totalSeats || 0;
+              }
+              
+              const currentQuantity = quantities[event.id] || 1;
+              const totalPrice = (event.price * currentQuantity).toFixed(4);
+
+              return (
+                <Card key={event.id} className="group hover:border-indigo-500/50 transition-all duration-300">
+                    <div className={`h-48 w-full relative overflow-hidden`}>
+                    <div className={`absolute inset-0 bg-gradient-to-br ${
+                        event.image === 'purple' ? 'from-purple-900 via-slate-900 to-indigo-900' :
+                        event.image === 'blue' ? 'from-blue-900 via-slate-900 to-cyan-900' :
+                        'from-pink-900 via-slate-900 to-rose-900'
+                    }`} />
+                    <div className="absolute inset-0 opacity-30" style={{backgroundImage: 'radial-gradient(circle at 2px 2px, white 1px, transparent 0)', backgroundSize: '24px 24px'}}></div>
+                    
+                    <div className="absolute top-4 right-4 bg-black/40 backdrop-blur-md px-3 py-1 rounded-full text-white font-mono text-sm border border-white/10">
+                        {event.price} ETH
+                    </div>
+                    <div className="absolute bottom-4 left-4 right-4">
+                        <h3 className="text-xl font-bold text-white mb-1 drop-shadow-lg">{event.name}</h3>
+                        <div className="flex items-center text-slate-300 text-sm gap-2">
+                        <MapPin size={14} /> {event.location}
+                        </div>
+                    </div>
+                    </div>
+                    
+                    <div className="p-5">
+                    <div className="flex justify-between items-start mb-4">
+                        <div className="flex flex-col gap-1">
+                        <div className="flex items-center text-slate-400 text-sm gap-2">
+                            <Calendar size={14} /> {event.date}
+                        </div>
+                        </div>
+                        <div className="text-right">
+                        <div className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">
+                            {hasSlots ? (activeSlot ? `Slot ${activeSlot}` : 'Select Slot') : 'Available'}
+                        </div>
+                        <div className={`font-mono font-bold ${currentAvailability < 5 ? 'text-red-400' : 'text-emerald-400'}`}>
+                            {currentAvailability} / {maxCapacity}
+                        </div>
+                        </div>
+                    </div>
+
+                    <div className="mb-4">
+                        {hasSlots ? (
+                            <>
+                            <label className="text-xs text-slate-500 uppercase font-bold tracking-wider block mb-2">Select Time</label>
+                            <div className="flex flex-wrap gap-2">
+                            {event.timeSlots.map(slot => {
+                                const seatsInSlot = event.slotAvailability ? (event.slotAvailability[slot] || 0) : 0;
+                                const isSoldOut = seatsInSlot === 0;
+                                const isSelected = activeSlot === slot;
+
+                                return (
+                                <button
+                                key={slot}
+                                disabled={isSoldOut}
+                                onClick={() => handleSlotSelect(event.id, slot)}
+                                className={`px-3 py-1 rounded text-xs font-mono transition-colors border ${
+                                    isSoldOut 
+                                    ? 'bg-slate-800 text-slate-600 border-slate-700 cursor-not-allowed line-through opacity-50' 
+                                    : isSelected 
+                                        ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-500/20' 
+                                        : 'bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600'
+                                }`}
+                                >
+                                {slot}
+                                </button>
+                                );
+                            })}
+                            </div>
+                            </>
+                        ) : (
+                            <div className="text-xs text-slate-500 italic bg-slate-900/50 p-2 rounded">Standard Ticket Access</div>
+                        )}
+                    </div>
+
+                    <div className="mb-4 bg-slate-900/50 p-3 rounded-lg flex justify-between items-center border border-slate-700/50">
+                        <span className="text-sm text-slate-400 font-medium">Quantity</span>
+                        <div className="flex items-center gap-3">
+                          <button 
+                            onClick={() => handleQuantityChange(event.id, -1, currentAvailability)}
+                            disabled={currentQuantity <= 1}
+                            className="p-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <Minus size={14} />
+                          </button>
+                          <span className="font-mono font-bold w-6 text-center text-white">{currentQuantity}</span>
+                          <button 
+                            onClick={() => handleQuantityChange(event.id, 1, currentAvailability)}
+                            disabled={currentQuantity >= currentAvailability}
+                            className="p-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <Plus size={14} />
+                          </button>
+                        </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                        <Button 
+                        onClick={() => buyTicket(event, activeSlot, currentQuantity)} 
+                        className="flex-1"
+                        loading={isProcessing}
+                        disabled={currentAvailability === 0 || (hasSlots && !activeSlot) || isProcessing}
                         >
-                        {slot}
-                        </button>
-                    ))}
+                        {currentAvailability === 0 
+                            ? 'Sold Out' 
+                            : <span className="flex items-center gap-2"><ShoppingBag size={16}/> Mint {currentQuantity} ({totalPrice} ETH)</span>}
+                        </Button>
                     </div>
-                </div>
-
-                <p className="text-slate-400 text-sm mb-6 line-clamp-2">{event.description}</p>
-
-                <div className="flex gap-3">
-                    <Button 
-                    onClick={() => buyTicket(event, selectedSlots[event.id])} 
-                    className="flex-1"
-                    loading={isProcessing}
-                    disabled={event.remainingSeats === 0 || !selectedSlots[event.id] || isProcessing}
-                    >
-                    {event.remainingSeats === 0 ? 'Sold Out' : 'Mint Ticket'}
-                    </Button>
-                </div>
-                </div>
-            </Card>
-            ))}
+                    </div>
+                </Card>
+              );
+            })}
         </div>
       )}
 
@@ -320,12 +273,13 @@ const MarketView = ({ events, buyTicket, resaleTickets, buyResaleTicket, walletA
               <div className="p-5">
                 <div className="flex justify-between mb-2">
                   <Badge color="orange">Resale</Badge>
-                  <span className="font-mono text-xs text-slate-500">#{ticket.id.substring(0,6)}</span>
+                  {/* Fixed potential crash by safely converting id */}
+                  <span className="font-mono text-xs text-slate-500">#{String(ticket.id).substring(0,6)}</span>
                 </div>
                 <h3 className="text-lg font-bold text-white mb-1">{ticket.eventName}</h3>
                 <div className="flex items-center gap-4 text-sm text-slate-400 mb-4">
                   <span>{ticket.eventDate}</span>
-                  <span className="bg-slate-700 px-2 rounded">{ticket.timeSlot}</span>
+                  <span className="bg-slate-700 px-2 rounded">{ticket.timeSlot || 'Standard'}</span>
                 </div>
                 
                 <div className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg mb-4">
@@ -360,35 +314,46 @@ const MarketView = ({ events, buyTicket, resaleTickets, buyResaleTicket, walletA
 const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, walletAddress, showNotification, isProcessing }) => {
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [isGeneratingDesc, setIsGeneratingDesc] = useState(false);
-  const [tempTimeSlot, setTempTimeSlot] = useState('');
+  const [tempSlotTime, setTempSlotTime] = useState('');
+  const [tempSlotCapacity, setTempSlotCapacity] = useState('');
+  const [slotList, setSlotList] = useState([]);
   
   const [newEvent, setNewEvent] = useState({
     name: '',
     date: '',
-    timeSlots: [],
     location: '',
     price: '',
-    totalSeats: '',
     description: ''
   });
 
   const resetForm = () => {
-    setNewEvent({ name: '', date: '', timeSlots: [], location: '', price: '', totalSeats: '', description: '' });
+    setNewEvent({ name: '', date: '', location: '', price: '', description: '' });
+    setSlotList([]);
+    setTempSlotTime('');
+    setTempSlotCapacity('');
     setEditingId(null);
     setIsCreatingEvent(false);
   };
 
   const handleEditClick = (event) => {
+    let reconstructedSlots = [];
+    if (event.slotTotalCapacity && event.timeSlots) {
+        reconstructedSlots = event.timeSlots.map(t => ({
+            time: t,
+            capacity: event.slotTotalCapacity[t] || 0
+        }));
+    } else if (event.timeSlots) {
+        reconstructedSlots = event.timeSlots.map(t => ({ time: t, capacity: event.totalSeats }));
+    }
+
     setNewEvent({
         name: event.name,
         date: event.date,
-        timeSlots: event.timeSlots || [],
         location: event.location,
         price: event.price,
-        totalSeats: event.totalSeats,
         description: event.description
     });
+    setSlotList(reconstructedSlots);
     setEditingId(event.id);
     setIsCreatingEvent(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -397,35 +362,41 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!walletAddress) return showNotification("Please connect wallet first", "error");
-    if (newEvent.timeSlots.length === 0) return showNotification("Please add at least one time slot", "error");
+    if (slotList.length === 0) return showNotification("Please add at least one time slot", "error");
     
+    const finalEventData = {
+        ...newEvent,
+        timeSlots: slotList.map(s => s.time),
+        slotList: slotList,
+        id: editingId
+    };
+
     if (editingId) {
-        onEventUpdate({ ...newEvent, id: editingId });
+        onEventUpdate(finalEventData);
         resetForm();
     } else {
-        onEventCreate(newEvent); 
+        onEventCreate(finalEventData); 
     }
   };
 
-  const addTimeSlot = () => {
-    if (tempTimeSlot && !newEvent.timeSlots.includes(tempTimeSlot)) {
-      setNewEvent(prev => ({...prev, timeSlots: [...prev.timeSlots, tempTimeSlot]}));
-      setTempTimeSlot('');
+  const addSlot = () => {
+    if (!tempSlotTime) return;
+    if (!tempSlotCapacity || parseInt(tempSlotCapacity) <= 0) return;
+    
+    if (slotList.some(s => s.time === tempSlotTime)) {
+        return showNotification("Slot time already exists", "error");
     }
+
+    setSlotList([...slotList, { time: tempSlotTime, capacity: parseInt(tempSlotCapacity) }]);
+    setTempSlotTime('');
+    setTempSlotCapacity('');
   };
 
-  const removeTimeSlot = (slot) => {
-    setNewEvent(prev => ({...prev, timeSlots: prev.timeSlots.filter(s => s !== slot)}));
+  const removeSlot = (timeToRemove) => {
+    setSlotList(slotList.filter(s => s.time !== timeToRemove));
   };
 
-  const handleGenerateDescription = async () => {
-    if (!newEvent.name) return showNotification("Please enter an event name first", "error");
-    setIsGeneratingDesc(true);
-    const prompt = `Write a creative, high-energy, and short description (max 2 sentences) for an event named "${newEvent.name}" happening at "${newEvent.location || 'a secret location'}". The tone should be exciting and urge people to buy tickets. Use emojis.`;
-    const text = await callGemini(prompt);
-    setNewEvent(prev => ({ ...prev, description: text }));
-    setIsGeneratingDesc(false);
-  };
+  const totalCapacity = slotList.reduce((acc, curr) => acc + curr.capacity, 0);
 
   return (
     <div className="space-y-8 animate-in slide-in-from-right duration-300 pb-24">
@@ -468,27 +439,6 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-400 mb-2">Time Slots</label>
-              <div className="flex gap-2 mb-2">
-                <input 
-                  type="time" 
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                  value={tempTimeSlot}
-                  onChange={(e) => setTempTimeSlot(e.target.value)}
-                />
-                <Button onClick={addTimeSlot} icon={Plus} variant="secondary" />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {newEvent.timeSlots.map(slot => (
-                  <span key={slot} className="bg-indigo-600/20 text-indigo-400 px-2 py-1 rounded text-sm flex items-center gap-1">
-                    {slot}
-                    <button type="button" onClick={() => removeTimeSlot(slot)}><X size={12} /></button>
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div>
               <label className="block text-sm font-medium text-slate-400 mb-2">Price (ETH)</label>
               <input 
                 required
@@ -500,15 +450,50 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-400 mb-2">Total Supply</label>
-              <input 
-                required
-                type="number" 
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                value={newEvent.totalSeats}
-                onChange={(e) => setNewEvent({...newEvent, totalSeats: e.target.value})}
-              />
+            <div className="col-span-1 md:col-span-2 bg-slate-900/50 p-4 rounded-xl border border-slate-700">
+              <label className="block text-sm font-medium text-indigo-400 mb-3 flex items-center gap-2">
+                 <Clock size={16}/> Time Slots & Capacity
+              </label>
+              
+              <div className="flex gap-2 mb-4 items-end">
+                <div className="flex-1">
+                    <label className="text-xs text-slate-500 mb-1 block">Time</label>
+                    <input 
+                    type="time" 
+                    className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                    value={tempSlotTime}
+                    onChange={(e) => setTempSlotTime(e.target.value)}
+                    />
+                </div>
+                <div className="flex-1">
+                    <label className="text-xs text-slate-500 mb-1 block">Tickets</label>
+                    <input 
+                    type="number" 
+                    placeholder="Qty"
+                    className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                    value={tempSlotCapacity}
+                    onChange={(e) => setTempSlotCapacity(e.target.value)}
+                    />
+                </div>
+                <Button onClick={addSlot} icon={Plus} variant="secondary" className="h-[42px]">Add</Button>
+              </div>
+
+              {slotList.length > 0 && (
+                  <div className="space-y-2">
+                      {slotList.map((slot, idx) => (
+                          <div key={idx} className="flex justify-between items-center bg-slate-800 px-3 py-2 rounded border border-slate-700">
+                              <span className="text-sm text-white font-mono">{slot.time}</span>
+                              <div className="flex items-center gap-3">
+                                  <span className="text-xs text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded">{slot.capacity} Seats</span>
+                                  <button type="button" onClick={() => removeSlot(slot.time)} className="text-slate-500 hover:text-red-400"><X size={14}/></button>
+                              </div>
+                          </div>
+                      ))}
+                      <div className="text-right text-xs text-slate-500 mt-2">
+                          Total Event Capacity: <span className="text-white font-bold">{totalCapacity}</span>
+                      </div>
+                  </div>
+              )}
             </div>
 
             <div className="col-span-2">
@@ -523,18 +508,7 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
             </div>
 
             <div className="col-span-2">
-              <div className="flex justify-between items-center mb-2">
-                <label className="block text-sm font-medium text-slate-400">Description</label>
-                <button
-                  type="button"
-                  onClick={handleGenerateDescription}
-                  disabled={isGeneratingDesc}
-                  className="text-xs flex items-center gap-1.5 text-indigo-400 hover:text-indigo-300 transition-colors bg-indigo-500/10 px-2 py-1 rounded-md border border-indigo-500/20"
-                >
-                  {isGeneratingDesc ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                  Generate with AI
-                </button>
-              </div>
+              <label className="block text-sm font-medium text-slate-400 mb-2">Description</label>
               <textarea 
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none h-24 resize-none"
                 value={newEvent.description}
@@ -563,8 +537,7 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
               <th className="px-6 py-4 font-medium">Event Name</th>
               <th className="px-6 py-4 font-medium">Date</th>
               <th className="px-6 py-4 font-medium">Slots</th>
-              <th className="px-6 py-4 font-medium">Sold / Total</th>
-              <th className="px-6 py-4 font-medium">Status</th>
+              <th className="px-6 py-4 font-medium">Price</th>
               <th className="px-6 py-4 font-medium text-right">Actions</th>
             </tr>
           </thead>
@@ -573,13 +546,8 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
               <tr key={e.id} className="hover:bg-slate-700/30 transition-colors">
                 <td className="px-6 py-4 font-medium text-white">{e.name}</td>
                 <td className="px-6 py-4 text-sm">{e.date}</td>
-                <td className="px-6 py-4 text-xs font-mono">{e.timeSlots?.length} Slots</td>
-                <td className="px-6 py-4 font-mono text-sm">{e.totalSeats - e.remainingSeats} / {e.totalSeats}</td>
-                <td className="px-6 py-4">
-                  <Badge color={e.remainingSeats > 0 ? 'green' : 'red'}>
-                    {e.remainingSeats > 0 ? 'Active' : 'Ended'}
-                  </Badge>
-                </td>
+                <td className="px-6 py-4 text-xs font-mono">{e.timeSlots?.length || 0} Slots</td>
+                <td className="px-6 py-4 font-mono text-sm">{e.price} ETH</td>
                 <td className="px-6 py-4 text-right">
                     {walletAddress && e.organizer.toLowerCase() === walletAddress.toLowerCase() && (
                         <div className="flex justify-end gap-2">
@@ -610,7 +578,7 @@ const OrganizerView = ({ events, onEventCreate, onEventUpdate, onEventDelete, wa
   );
 };
 
-const TicketsView = ({ myTickets, handleSellTicket, cancelListing, setActiveTab }) => {
+const TicketsView = ({ myTickets, handleSellTicket, cancelListing, setActiveTab, walletAddress }) => {
   const [sellingId, setSellingId] = useState(null);
   const [resalePriceInput, setResalePriceInput] = useState('');
 
@@ -634,7 +602,8 @@ const TicketsView = ({ myTickets, handleSellTicket, cancelListing, setActiveTab 
           </div>
           <h3 className="text-2xl font-bold text-white mb-2">No Tickets Yet</h3>
           <p className="text-slate-400 mb-8">
-             {myTickets.length === 0 ? "Connect your wallet to see your tickets or purchase from the market." : ""}
+             {/* Improved empty state logic */}
+             {!walletAddress ? "Connect your wallet to see your tickets." : "You haven't purchased any tickets yet."}
           </p>
           <Button onClick={() => setActiveTab('market')} icon={LayoutGrid}>Go to Market</Button>
         </div>
@@ -646,7 +615,8 @@ const TicketsView = ({ myTickets, handleSellTicket, cancelListing, setActiveTab 
               <div className="bg-indigo-600 p-6 flex flex-col justify-between items-center w-24 relative">
                 <div className="border-2 border-dashed border-white/30 rounded-full w-4 h-4 absolute -top-2 left-1/2 -translate-x-1/2 bg-slate-900" />
                 <div className="border-2 border-dashed border-white/30 rounded-full w-4 h-4 absolute -bottom-2 left-1/2 -translate-x-1/2 bg-slate-900" />
-                <span className="text-white/80 font-mono text-xs rotate-180" style={{writingMode: 'vertical-rl'}}>#{ticket.id.substring(0,6)}</span>
+                {/* Safe ID rendering */}
+                <span className="text-white/80 font-mono text-xs rotate-180" style={{writingMode: 'vertical-rl'}}>#{String(ticket.id).substring(0,6)}</span>
                 <Ticket className="text-white" />
               </div>
 
@@ -656,7 +626,7 @@ const TicketsView = ({ myTickets, handleSellTicket, cancelListing, setActiveTab 
                   <h3 className="text-lg font-bold text-slate-800 mb-1">{ticket.eventName}</h3>
                   <div className="flex items-center text-slate-500 text-sm gap-4 mb-4">
                     <span className="flex items-center gap-1"><Calendar size={14} /> {ticket.eventDate}</span>
-                    <span className="bg-slate-200 px-2 py-0.5 rounded text-xs">{ticket.timeSlot}</span>
+                    <span className="bg-slate-200 px-2 py-0.5 rounded text-xs">{ticket.timeSlot || 'Standard'}</span>
                   </div>
                 </div>
 
@@ -696,71 +666,6 @@ const TicketsView = ({ myTickets, handleSellTicket, cancelListing, setActiveTab 
   );
 };
 
-const ChatWidget = ({ events }) => {
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState([
-    { role: 'assistant', text: 'Hello! I am your BlockTix Concierge. Ask me about upcoming events or finding tickets!' }
-  ]);
-  const [chatInput, setChatInput] = useState('');
-  const [isChatLoading, setIsChatLoading] = useState(false);
-  const chatEndRef = useRef(null);
-
-  useEffect(() => {
-    if (chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [chatMessages, isChatOpen]);
-
-  const handleChatSubmit = async (e) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
-    
-    const userMsg = chatInput;
-    setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
-    setChatInput('');
-    setIsChatLoading(true);
-
-    const eventContext = events.map(e => 
-      `- Event: ${e.name} (${e.date})\n  Slots: ${e.timeSlots?.join(', ') || 'N/A'}\n  Location: ${e.location}\n  Price: ${e.price} ETH`
-    ).join('\n\n');
-
-    const systemPrompt = `You are the AI Concierge for BlockTix. Here is the live data: \n${eventContext}\n Help users find events.`;
-    
-    const response = await callGemini(userMsg, systemPrompt);
-    setChatMessages(prev => [...prev, { role: 'assistant', text: response }]);
-    setIsChatLoading(false);
-  };
-
-  return (
-    <div className={`fixed bottom-6 right-6 z-50 flex flex-col items-end transition-all ${isChatOpen ? 'w-full md:w-96' : 'w-auto'}`}>
-      {isChatOpen && (
-        <div className="mb-4 w-full bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden h-[400px]">
-          <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-4 flex justify-between items-center">
-            <h3 className="text-white font-bold flex gap-2"><Sparkles className="text-yellow-300 w-5 h-5" /> Concierge AI</h3>
-            <button onClick={() => setIsChatOpen(false)} className="text-white"><X size={20} /></button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-900/50">
-            {chatMessages.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] rounded-2xl px-4 py-2 text-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-200'}`}>{msg.text}</div>
-              </div>
-            ))}
-            {isChatLoading && <Loader2 className="animate-spin text-slate-500" />}
-            <div ref={chatEndRef} />
-          </div>
-          <form onSubmit={handleChatSubmit} className="p-3 border-t border-slate-700 bg-slate-800 flex gap-2">
-            <input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Ask..." className="flex-1 bg-slate-900 text-white rounded-full px-4 py-2 text-sm outline-none" />
-            <button type="submit" disabled={isChatLoading} className="p-2 bg-indigo-600 rounded-full text-white"><Send size={16} /></button>
-          </form>
-        </div>
-      )}
-      <button onClick={() => setIsChatOpen(!isChatOpen)} className="w-12 h-12 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg hover:scale-105 transition-transform">
-        {isChatOpen ? <X /> : <MessageSquare />}
-      </button>
-    </div>
-  );
-};
-
 // --- Main App Component ---
 
 export default function EventTicketingApp() {
@@ -786,8 +691,7 @@ export default function EventTicketingApp() {
           await signInAnonymously(auth);
         }
       } catch (error) {
-        console.error("Auth Initialization Error:", error);
-        // Don't block the app, just log. Data sync might still work if Rules are open.
+        console.error("Auth Initialization Warning:", error);
       }
     };
     initAuth();
@@ -796,14 +700,20 @@ export default function EventTicketingApp() {
 
   // --- 2. Real-time Data Sync ---
   useEffect(() => {
-    // Removed "if (!user) return;" to allow reading public data even if Auth fails (Test Mode)
-    
+    // Note: Checking user is restored to follow strict rules, but logic allows public reads if rules permit
+    if (isEnvAvailable && !user) return; 
+
     // Sync Events
     const eventsRef = getCollection('events');
     const unsubEvents = onSnapshot(eventsRef, (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setEvents(list.sort((a, b) => b.createdAt - a.createdAt));
-    }, (err) => console.error("Event Sync Error", err));
+    }, (err) => {
+      console.error("Event Sync Error", err);
+      if (err.code === 'permission-denied') {
+         setNotification({ message: "Database permission denied. Enable Anonymous Auth or open Security Rules.", type: "error" });
+      }
+    });
 
     // Sync Tickets
     const ticketsRef = getCollection('tickets');
@@ -858,21 +768,35 @@ export default function EventTicketingApp() {
 
   // --- 4. Transaction & Database Logic ---
 
-  const handleCreateEvent = async (newEventData) => {
-    // Note: newEventData is passed from OrganizerView (not 'e')
-    // We already check wallet in OrganizerView, but safe to check again or trust UI.
-    
+  const handleCreateEvent = async (eventDataFromView) => {
     setIsProcessing(true);
     
+    // Calculate total capacity from the slot list
+    const totalCapacity = eventDataFromView.slotList.reduce((acc, curr) => acc + curr.capacity, 0);
+    
+    // Create map for fast lookup: "10:00": 50
+    const slotAvailability = {};
+    const slotTotalCapacity = {};
+    
+    eventDataFromView.slotList.forEach(slot => {
+        slotAvailability[slot.time] = slot.capacity;
+        slotTotalCapacity[slot.time] = slot.capacity;
+    });
+
     const eventPayload = {
-        name: newEventData.name,
-        date: newEventData.date,
-        price: parseFloat(newEventData.price),
-        totalSeats: parseInt(newEventData.totalSeats),
-        remainingSeats: parseInt(newEventData.totalSeats),
-        location: newEventData.location,
-        description: newEventData.description,
-        timeSlots: newEventData.timeSlots,
+        name: eventDataFromView.name,
+        date: eventDataFromView.date,
+        price: parseFloat(eventDataFromView.price),
+        totalSeats: totalCapacity, 
+        remainingSeats: totalCapacity, 
+        
+        // New structure for per-slot logic
+        slotAvailability: slotAvailability,
+        slotTotalCapacity: slotTotalCapacity,
+        
+        location: eventDataFromView.location,
+        description: eventDataFromView.description,
+        timeSlots: eventDataFromView.timeSlots,
         organizer: walletAddress,
         image: ['blue', 'purple', 'pink'][Math.floor(Math.random() * 3)],
         createdAt: Date.now()
@@ -891,30 +815,52 @@ export default function EventTicketingApp() {
     }
   };
 
-  const buyTicket = async (event, slot) => {
+  const buyTicket = async (event, slot, quantity = 1) => {
     if (!walletAddress) return showNotification("Connect wallet first", "error");
+    if (!slot) return showNotification("Select a time slot", "error");
     
     setIsProcessing(true);
     try {
-        await sendEthTransaction(walletAddress, event.organizer, event.price.toString());
-        setBalance(prev => (parseFloat(prev) - event.price).toFixed(4));
+        const totalEthCost = (event.price * quantity).toFixed(4);
+        
+        // 1. Transaction
+        await sendEthTransaction(walletAddress, event.organizer, totalEthCost);
+        
+        // 2. Optimistic Balance Update
+        setBalance(prev => (parseFloat(prev) - parseFloat(totalEthCost)).toFixed(4));
 
-        await addDoc(getCollection('tickets'), {
-            eventId: event.id,
-            eventName: event.name,
-            eventDate: event.date,
-            timeSlot: slot,
-            purchasePrice: event.price,
-            resalePrice: 0,
-            isForSale: false,
-            owner: walletAddress,
-            createdAt: Date.now()
-        });
+        // 3. Create Ticket Docs (Bulk)
+        const batchPromises = [];
+        for (let i = 0; i < quantity; i++) {
+            batchPromises.push(addDoc(getCollection('tickets'), {
+                eventId: event.id,
+                eventName: event.name,
+                eventDate: event.date,
+                timeSlot: slot,
+                purchasePrice: event.price,
+                resalePrice: 0,
+                isForSale: false,
+                owner: walletAddress,
+                createdAt: Date.now()
+            }));
+        }
+        await Promise.all(batchPromises);
 
+        // 4. Update Event Seat Count (Per Slot AND Total)
         const eventRef = getDocRef('events', event.id);
-        await updateDoc(eventRef, { remainingSeats: event.remainingSeats - 1 });
+        const currentSlotSeats = event.slotAvailability ? event.slotAvailability[slot] : 0;
+        const newSlotSeats = Math.max(0, currentSlotSeats - quantity);
+        const newTotalRemaining = Math.max(0, event.remainingSeats - quantity);
+        
+        // Construct update object safely using dot notation for nested map
+        const updatePayload = {
+            [`slotAvailability.${slot}`]: newSlotSeats,
+            remainingSeats: newTotalRemaining
+        };
 
-        showNotification("Ticket Minted & Saved!", "success");
+        await updateDoc(eventRef, updatePayload);
+
+        showNotification(`${quantity} Ticket(s) Minted!`, "success");
         setTimeout(() => refreshBalance(walletAddress), 4000);
     } catch (err) {
         console.error(err);
@@ -958,19 +904,34 @@ export default function EventTicketingApp() {
 
   const handleEventUpdate = async (updatedData) => {
     try {
-      const oldEvent = events.find(e => e.id === updatedData.id);
-      const seatDiff = parseInt(updatedData.totalSeats) - parseInt(oldEvent.totalSeats);
-      
       const eventRef = getDocRef('events', updatedData.id);
+      
+      // Calculate new total
+      const totalCapacity = updatedData.slotList.reduce((acc, curr) => acc + curr.capacity, 0);
+      
+      const slotAvailability = {};
+      const slotTotalCapacity = {};
+      
+      updatedData.slotList.forEach(slot => {
+          slotAvailability[slot.time] = slot.capacity;
+          slotTotalCapacity[slot.time] = slot.capacity;
+      });
 
       await updateDoc(eventRef, {
-          ...updatedData,
+          name: updatedData.name,
+          date: updatedData.date,
+          location: updatedData.location,
+          description: updatedData.description,
           price: parseFloat(updatedData.price),
-          totalSeats: parseInt(updatedData.totalSeats),
-          remainingSeats: parseInt(oldEvent.remainingSeats) + seatDiff
+          timeSlots: updatedData.timeSlots,
+          totalSeats: totalCapacity,
+          remainingSeats: totalCapacity, 
+          slotAvailability: slotAvailability,
+          slotTotalCapacity: slotTotalCapacity
       });
       showNotification("Event updated!", "success");
     } catch(e) {
+      console.error(e);
       showNotification("Update failed", "error");
     }
   };
@@ -991,7 +952,6 @@ export default function EventTicketingApp() {
     } catch(e) { showNotification("Error cancelling", "error"); }
   };
 
-  // --- Filtering ---
   const myTickets = walletAddress 
     ? allTickets.filter(t => t.owner && t.owner.toLowerCase() === walletAddress.toLowerCase()) 
     : [];
@@ -1095,10 +1055,9 @@ export default function EventTicketingApp() {
             handleSellTicket={handleSell} 
             cancelListing={cancelListing}
             setActiveTab={setActiveTab} 
+            walletAddress={walletAddress}
           />
         )}
-
-        <ChatWidget events={events} />
       </main>
     </div>
   );
