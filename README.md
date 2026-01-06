@@ -39,22 +39,6 @@ Organizers deploy events, and users mint uniquely owned tickets stored in their 
 
 ---
 
-
-# RUNNING THE APPLICATION
----
-
-```bash
-npm run dev
-```
-
-Open in browser:
-
-```bash
-http://localhost:5173
-```
-
----
-
 # WORKFLOWS
 ---
 
