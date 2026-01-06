@@ -9,7 +9,7 @@ import {
 import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, collection, doc, addDoc, updateDoc, 
-  deleteDoc, onSnapshot 
+  deleteDoc, onSnapshot, runTransaction 
 } from 'firebase/firestore';
 import { 
   getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged 
@@ -63,8 +63,7 @@ const getDocRef = (colName, docId) => {
 // --- Components ---
 
 const Card = ({ children, className = "" }) => (
-  // Fixed: Ensure custom bg classes (like bg-white) override default bg-slate-800
-  <div className={`border border-slate-700 rounded-xl overflow-hidden shadow-lg ${className.includes('bg-') ? '' : 'bg-slate-800'} ${className}`}>
+  <div className={`bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-lg ${className}`}>
     {children}
   </div>
 );
@@ -273,7 +272,6 @@ const MarketView = ({ events, buyTicket, resaleTickets, buyResaleTicket, walletA
               <div className="p-5">
                 <div className="flex justify-between mb-2">
                   <Badge color="orange">Resale</Badge>
-                  {/* Fixed potential crash by safely converting id */}
                   <span className="font-mono text-xs text-slate-500">#{String(ticket.id).substring(0,6)}</span>
                 </div>
                 <h3 className="text-lg font-bold text-white mb-1">{ticket.eventName}</h3>
@@ -817,7 +815,8 @@ export default function EventTicketingApp() {
 
   const buyTicket = async (event, slot, quantity = 1) => {
     if (!walletAddress) return showNotification("Connect wallet first", "error");
-    if (!slot) return showNotification("Select a time slot", "error");
+    // Ensure we have a slot unless it is a legacy event without slots
+    if (!slot && event.timeSlots && event.timeSlots.length > 0) return showNotification("Select a time slot", "error");
     
     setIsProcessing(true);
     try {
@@ -830,13 +829,15 @@ export default function EventTicketingApp() {
         setBalance(prev => (parseFloat(prev) - parseFloat(totalEthCost)).toFixed(4));
 
         // 3. Create Ticket Docs (Bulk)
+        // Use a batch write or multiple addDocs. For simplicity here: multiple awaits or Promise.all
+        // Using Promise.all is faster.
         const batchPromises = [];
         for (let i = 0; i < quantity; i++) {
             batchPromises.push(addDoc(getCollection('tickets'), {
                 eventId: event.id,
                 eventName: event.name,
                 eventDate: event.date,
-                timeSlot: slot,
+                timeSlot: slot || 'Standard', // Fallback for legacy
                 purchasePrice: event.price,
                 resalePrice: 0,
                 isForSale: false,
@@ -846,25 +847,42 @@ export default function EventTicketingApp() {
         }
         await Promise.all(batchPromises);
 
-        // 4. Update Event Seat Count (Per Slot AND Total)
+        // 4. Update Event Seat Count (Transactional Update)
         const eventRef = getDocRef('events', event.id);
-        const currentSlotSeats = event.slotAvailability ? event.slotAvailability[slot] : 0;
-        const newSlotSeats = Math.max(0, currentSlotSeats - quantity);
-        const newTotalRemaining = Math.max(0, event.remainingSeats - quantity);
         
-        // Construct update object safely using dot notation for nested map
-        const updatePayload = {
-            [`slotAvailability.${slot}`]: newSlotSeats,
-            remainingSeats: newTotalRemaining
-        };
-
-        await updateDoc(eventRef, updatePayload);
+        await runTransaction(db, async (transaction) => {
+            const eventDoc = await transaction.get(eventRef);
+            if (!eventDoc.exists()) throw "Event does not exist!";
+            
+            const data = eventDoc.data();
+            let newUpdateData = {};
+            
+            if (data.slotAvailability && slot) {
+                const currentSlotSeats = data.slotAvailability[slot] || 0;
+                if (currentSlotSeats < quantity) throw "Not enough seats!";
+                
+                const newSlotSeats = currentSlotSeats - quantity;
+                const newTotalRemaining = Math.max(0, (data.remainingSeats || 0) - quantity);
+                
+                newUpdateData = {
+                    [`slotAvailability.${slot}`]: newSlotSeats,
+                    remainingSeats: newTotalRemaining
+                };
+            } else {
+                // Legacy fallback
+                const currentTotal = data.remainingSeats || 0;
+                if (currentTotal < quantity) throw "Not enough seats!";
+                newUpdateData = { remainingSeats: currentTotal - quantity };
+            }
+            
+            transaction.update(eventRef, newUpdateData);
+        });
 
         showNotification(`${quantity} Ticket(s) Minted!`, "success");
         setTimeout(() => refreshBalance(walletAddress), 4000);
     } catch (err) {
         console.error(err);
-        showNotification("Purchase failed", "error");
+        showNotification("Purchase failed: " + (typeof err === 'string' ? err : "Unknown Error"), "error");
     } finally {
         setIsProcessing(false);
     }
@@ -952,6 +970,7 @@ export default function EventTicketingApp() {
     } catch(e) { showNotification("Error cancelling", "error"); }
   };
 
+  // --- Filtering ---
   const myTickets = walletAddress 
     ? allTickets.filter(t => t.owner && t.owner.toLowerCase() === walletAddress.toLowerCase()) 
     : [];
